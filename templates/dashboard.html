@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard – {{ display_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dashboard-page">
+  <header class="header">
+    <span>Signed in as <strong>{{ display_name }}</strong> ({{ username }})</span>
+    <a href="/logout" class="btn btn-outline">Log out</a>
+  </header>
+
+  <main class="main">
+    <div class="card dashboard-card">
+      <h2>Verify &amp; Submit</h2>
+      <p class="hint">Fill the form and verify your identity with your face to continue.</p>
+
+      <form id="main-form" class="dashboard-form">
+        <div class="form-group">
+          <label for="full_name">Full name</label>
+          <input type="text" id="full_name" name="full_name" placeholder="Your full name">
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="you@example.com">
+        </div>
+        <div class="form-group">
+          <label for="notes">Notes</label>
+          <textarea id="notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+        </div>
+
+        <div class="verify-section">
+          <p class="verify-label">Identity verification</p>
+          <button type="button" id="btn-verify" class="btn btn-primary btn-verify">
+            Verify yourself
+          </button>
+          <span id="verify-status" class="verify-status" aria-live="polite"></span>
+        </div>
+
+        <button type="submit" id="btn-submit" class="btn btn-success" disabled>
+          Submit (verify first)
+        </button>
+      </form>
+    </div>
+  </main>
+
+  <!-- Camera modal -->
+  <div id="camera-modal" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Capture your face</h3>
+      <p class="modal-hint">Position your face in the frame and click Capture.</p>
+      <div class="camera-wrap">
+        <video id="camera-video" autoplay playsinline></video>
+        <canvas id="camera-canvas" hidden></canvas>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btn-capture" class="btn btn-primary">Capture</button>
+        <button type="button" id="btn-submit-capture" class="btn btn-success" disabled>Submit for verification</button>
+        <button type="button" id="btn-close-camera" class="btn btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result toast -->
+  <div id="result-toast" class="toast" role="alert" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

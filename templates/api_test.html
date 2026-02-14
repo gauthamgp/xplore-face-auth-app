@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Test – Register & Verify</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .api-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+    .api-tabs button { padding: 0.6rem 1.2rem; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+    .api-tabs button.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .api-panel { display: none; }
+    .api-panel.active { display: block; }
+    .api-test-page { max-width: 560px; margin: 0 auto; padding: 1.5rem; }
+    .api-test-page h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+    .api-test-page .hint { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .form-group input { width: 100%; padding: 0.65rem 1rem; margin-bottom: 1rem; font-size: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); }
+    .api-result { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.9rem; white-space: pre-wrap; }
+    .api-result.success { background: var(--success-bg); border: 1px solid var(--success); color: var(--success); }
+    .api-result.error { background: var(--error-bg); border: 1px solid var(--error); color: var(--error); }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--text-muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body class="api-test-page">
+  <a class="back-link" href="/">← Back to app</a>
+  <h1>API Test – Register & Verify</h1>
+  <p class="hint">Use this page to mimic the two flows: (1) Register a user with a reference photo, (2) Verify a user with a face image. Same APIs your frontend/DevOps will call.</p>
+
+  <div class="api-tabs">
+    <button type="button" id="tab-register" class="active">1. Register</button>
+    <button type="button" id="tab-verify">2. Verify</button>
+  </div>
+
+  <div id="panel-register" class="api-panel active">
+    <div class="card" style="padding: 1.25rem;">
+      <h2 style="font-size: 1.1rem; margin: 0 0 1rem;">Register reference photo</h2>
+      <p class="hint" style="margin-bottom: 1rem;">Capture a photo during sign-up. It will be stored in S3 under <code>users/&lt;user_id&gt;/</code>.</p>
+      <div class="form-group">
+        <label for="reg-user-id">User ID</label>
+        <input type="text" id="reg-user-id" placeholder="e.g. alice" />
+      </div>
+      <button type="button" id="btn-reg-capture" class="btn btn-primary">Open camera & capture</button>
+      <div id="reg-result" class="api-result" style="display: none;"></div>
+    </div>
+  </div>
+
+  <div id="panel-verify" class="api-panel">
+    <div class="card" style="padding: 1.25rem;">
+      <h2 style="font-size: 1.1rem; margin: 0 0 1rem;">Verify user</h2>
+      <p class="hint" style="margin-bottom: 1rem;">Submit a face image; backend compares it to reference photos in S3 for this user.</p>
+      <div class="form-group">
+        <label for="ver-user-id">User ID</label>
+        <input type="text" id="ver-user-id" placeholder="e.g. alice" />
+      </div>
+      <button type="button" id="btn-ver-capture" class="btn btn-primary">Open camera & capture</button>
+      <div id="ver-result" class="api-result" style="display: none;"></div>
+    </div>
+  </div>
+
+  <!-- Shared camera modal -->
+  <div id="camera-modal" class="modal" hidden>
+    <div class="modal-content">
+      <h3 id="camera-title">Capture photo</h3>
+      <p class="modal-hint">Position your face in the frame, then click Capture and Submit.</p>
+      <div class="camera-wrap">
+        <video id="camera-video" autoplay playsinline></video>
+        <canvas id="camera-canvas" hidden></canvas>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btn-capture" class="btn btn-primary">Capture</button>
+        <button type="button" id="btn-submit-photo" class="btn btn-success" disabled>Submit</button>
+        <button type="button" id="btn-close-camera" class="btn btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+(function () {
+  const tabRegister = document.getElementById("tab-register");
+  const tabVerify = document.getElementById("tab-verify");
+  const panelRegister = document.getElementById("panel-register");
+  const panelVerify = document.getElementById("panel-verify");
+  const regUserId = document.getElementById("reg-user-id");
+  const verUserId = document.getElementById("ver-user-id");
+  const btnRegCapture = document.getElementById("btn-reg-capture");
+  const btnVerCapture = document.getElementById("btn-ver-capture");
+  const modal = document.getElementById("camera-modal");
+  const cameraTitle = document.getElementById("camera-title");
+  const video = document.getElementById("camera-video");
+  const canvas = document.getElementById("camera-canvas");
+  const btnCapture = document.getElementById("btn-capture");
+  const btnSubmitPhoto = document.getElementById("btn-submit-photo");
+  const btnCloseCamera = document.getElementById("btn-close-camera");
+  const regResult = document.getElementById("reg-result");
+  const verResult = document.getElementById("ver-result");
+
+  let stream = null;
+  let capturedDataUrl = null;
+  let currentMode = "register"; // "register" | "verify"
+
+  tabRegister.addEventListener("click", function () {
+    tabRegister.classList.add("active"); tabVerify.classList.remove("active");
+    panelRegister.classList.add("active"); panelVerify.classList.remove("active");
+  });
+  tabVerify.addEventListener("click", function () {
+    tabVerify.classList.add("active"); tabRegister.classList.remove("active");
+    panelVerify.classList.add("active"); panelRegister.classList.remove("active");
+  });
+
+  function openCamera(mode) {
+    currentMode = mode;
+    capturedDataUrl = null;
+    btnSubmitPhoto.disabled = true;
+    cameraTitle.textContent = mode === "register" ? "Capture reference photo" : "Capture face for verification";
+    modal.hidden = false;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+      .then(function (s) { stream = s; video.srcObject = stream; })
+      .catch(function (err) {
+        showResult(mode, "Camera error: " + (err.message || "Permission denied"), false);
+        modal.hidden = true;
+      });
+  }
+
+  function closeCamera() {
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    video.srcObject = null;
+    modal.hidden = true;
+    capturedDataUrl = null;
+  }
+
+  btnRegCapture.addEventListener("click", function () { openCamera("register"); });
+  btnVerCapture.addEventListener("click", function () { openCamera("verify"); });
+  btnCloseCamera.addEventListener("click", closeCamera);
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeCamera(); });
+
+  btnCapture.addEventListener("click", function () {
+    var w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return;
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    capturedDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    btnSubmitPhoto.disabled = false;
+  });
+
+  function showResult(mode, text, isSuccess) {
+    var el = mode === "register" ? regResult : verResult;
+    el.textContent = text;
+    el.className = "api-result " + (isSuccess ? "success" : "error");
+    el.style.display = "block";
+  }
+
+  btnSubmitPhoto.addEventListener("click", function () {
+    if (!capturedDataUrl) return;
+    var userId = currentMode === "register" ? (regUserId.value || "").trim() : (verUserId.value || "").trim();
+    if (!userId) {
+      showResult(currentMode, "Please enter User ID.", false);
+      return;
+    }
+    btnSubmitPhoto.disabled = true;
+    btnSubmitPhoto.textContent = "Sending…";
+
+    var url = currentMode === "register" ? "/api/register" : "/api/verify";
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, image: capturedDataUrl })
+    })
+      .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+      .then(function (res) {
+        closeCamera();
+        btnSubmitPhoto.textContent = "Submit";
+        var d = res.data;
+        var ok = res.status >= 200 && res.status < 300;
+        if (currentMode === "register") {
+          showResult("register", ok ? "Stored: " + (d.stored_key || "OK") + "\n" + (d.message || "") : (d.message || "Request failed"), ok);
+        } else {
+          showResult("verify", (d.verified ? "Verified: " : "Not verified: ") + (d.message || ""), d.verified === true);
+        }
+      })
+      .catch(function (err) {
+        closeCamera();
+        btnSubmitPhoto.textContent = "Submit";
+        btnSubmitPhoto.disabled = false;
+        showResult(currentMode, "Request failed: " + (err.message || "Network error"), false);
+      });
+  });
+})();
+  </script>
+</body>
+</html>

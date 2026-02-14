@@ -1,0 +1,17 @@
+# Precomputed face embeddings (regenerated when reference photos change)
+.face_embeddings.pkl
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.env

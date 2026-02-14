@@ -8,4 +8,4 @@ deepface
 opencv-python-headless
 numpy
 Pillow
-
+tensorflow

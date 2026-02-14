@@ -24,6 +24,37 @@ from starlette.middleware.sessions import SessionMiddleware
 # Load environment variables from .env file
 load_dotenv()
 
+# If deployed with AWS Secrets Manager, load secrets into environment early.
+def _load_aws_secrets_from_secrets_manager():
+    """If `SECRETS_MANAGER_SECRET_NAME` is set, fetch that secret (JSON) and
+    populate os.environ with its keys. This lets us keep credentials out of files.
+    """
+    name = os.environ.get("SECRETS_MANAGER_SECRET_NAME") or os.environ.get("SECRETS_NAME")
+    if not name:
+        return
+    try:
+        import json
+        import boto3
+
+        client = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION"))
+        resp = client.get_secret_value(SecretId=name)
+        secret_str = resp.get("SecretString")
+        if not secret_str:
+            return
+        data = json.loads(secret_str)
+        if not isinstance(data, dict):
+            return
+        for k, v in data.items():
+            # Overwrite any existing env var with the secret's value
+            os.environ[str(k)] = str(v)
+    except Exception as e:
+        # Non-fatal; continue with whatever env is present
+        print(f"Warning: could not load secrets from Secrets Manager '{name}': {e}")
+
+
+# Try loading secrets from AWS Secrets Manager (if configured)
+_load_aws_secrets_from_secrets_manager()
+
 # Reduce TensorFlow log noise and limit CPU threads to reduce contention on Render
 # Set these before any TensorFlow/DeepFace import so they take effect early.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -31,6 +62,16 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+import logging
+import time
+
+# Configure root logger for console output with timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("xplore")
 from face_utils import get_user_folder, verify_image_file
 from s3_utils import (
     upload_reference_image,
@@ -40,6 +81,61 @@ from s3_utils import (
 )
 
 app = FastAPI(title="Face Auth App")
+
+
+# Startup validation: verify AWS credentials and S3 bucket access
+@app.on_event("startup")
+async def startup_event():
+    """Validate configuration on app startup."""
+    logger.info("=" * 80)
+    logger.info("XPLORE FACE AUTH STARTUP")
+    logger.info("=" * 80)
+    
+    # Check S3 configuration
+    if S3_BUCKET == "YOUR_BUCKET_NAME_PLACEHOLDER":
+        logger.error("❌ S3_BUCKET is not configured! Set S3_BUCKET in environment or .env")
+        logger.error("   Cannot proceed without valid S3 bucket.")
+        raise RuntimeError("S3_BUCKET not configured")
+    
+    logger.info(f"✓ S3_BUCKET: {S3_BUCKET}")
+    logger.info(f"✓ AWS_REGION: {os.environ.get('AWS_REGION', 'us-east-1')}")
+    
+    # Test S3 credentials (does NOT require valid credentials to import boto3)
+    try:
+        from s3_utils import get_s3_client
+        client = get_s3_client()
+        
+        # Test by trying to head the bucket (checks if bucket exists and is accessible)
+        # This only requires s3:ListBucket permission, NOT s3:ListAllMyBuckets
+        try:
+            client.head_bucket(Bucket=S3_BUCKET)
+            logger.info(f"✓ AWS credentials validated and S3 bucket '{S3_BUCKET}' is accessible")
+        except client.exceptions.NoSuchBucket:
+            logger.error(f"❌ S3 bucket '{S3_BUCKET}' does not exist in this AWS account/region")
+            raise
+        except client.exceptions.Forbidden:
+            logger.error(f"❌ Access denied to S3 bucket '{S3_BUCKET}' — check IAM policy")
+            raise
+    except ImportError as e:
+        logger.error(f"❌ Failed to import s3_utils: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to validate AWS credentials: {e}")
+        logger.error("   Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set (local)")
+        logger.error("   Or EC2 instance has IAM role attached (production)")
+        raise
+    
+    # Check SECRET_KEY
+    secret_key = os.environ.get("SECRET_KEY")
+    if secret_key and secret_key != "dev-secret-change-in-production":
+        logger.info(f"✓ SECRET_KEY configured (production)")
+    else:
+        logger.warning(f"⚠️  Using default SECRET_KEY (change for production!)")
+    
+    logger.info("=" * 80)
+    logger.info("STARTUP COMPLETE - Ready to accept requests")
+    logger.info("=" * 80)
+
 
 # Session middleware
 app.add_middleware(
@@ -135,6 +231,8 @@ async def dashboard(request: Request):
 @app.post("/verify")
 async def verify(request: Request):
     """Verify face from uploaded image or base64 data."""
+    start_ts = time.perf_counter()
+    logger.info("/verify start: incoming request")
     username = require_auth(request)
     user_folder = get_user_folder(username, str(USERS_BASE))
 
@@ -182,7 +280,11 @@ async def verify(request: Request):
         tmp_path = tmp.name
     
     try:
+        logger.info("/verify: saved temp image %s (%d bytes)", tmp_path, os.path.getsize(tmp_path))
+        t1 = time.perf_counter()
         verified, message = verify_image_file(tmp_path, user_folder)
+        t2 = time.perf_counter()
+        logger.info("/verify: verify_image_file returned verified=%s message=%s (%.3fs)", verified, message, t2 - t1)
         display_name = request.session.get("display_name", username)
         
         if verified:
@@ -202,6 +304,8 @@ async def verify(request: Request):
             os.unlink(tmp_path)
         except Exception:
             pass
+        elapsed = time.perf_counter() - start_ts
+        logger.info("/verify end: total elapsed %.3fs for user=%s", elapsed, username)
 
 
 # -----------------------------------------------------------------------------
@@ -230,6 +334,8 @@ async def api_register(request: Request):
     or form-data: user_id, image (file).
     Returns stored S3 key and success message.
     """
+    start_ts = time.perf_counter()
+    logger.info("/api/register start: incoming request")
     content_type = request.headers.get("content-type", "")
     user_id = None
     image_data = None
@@ -272,7 +378,11 @@ async def api_register(request: Request):
         )
 
     try:
+        logger.info("/api/register: uploading reference for user=%s file_ext=%s", user_id, suffix)
+        t0 = time.perf_counter()
         key = upload_reference_image(user_id, image_data, file_extension=suffix)
+        t1 = time.perf_counter()
+        logger.info("/api/register: uploaded to S3 key=%s (%.3fs)", key, t1 - t0)
         
         # Precompute and cache embeddings during registration for faster first verification
         try:
@@ -292,6 +402,8 @@ async def api_register(request: Request):
             # Non-critical: if precomputation fails, embeddings will be computed on first verify
             print(f"Warning: Could not precompute embeddings for {user_id}: {e}")
         
+        elapsed = time.perf_counter() - start_ts
+        logger.info("/api/register end: total elapsed %.3fs for user=%s", elapsed, user_id)
         return JSONResponse({
             "success": True,
             "message": "Reference photo stored successfully.",

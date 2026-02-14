@@ -8,4 +8,4 @@ deepface
 opencv-python-headless
 numpy
 Pillow
-tensorflow-cpu>=2.11.0,<2.13.0
+tensorflow

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import os
 from pathlib import Path
 from typing import Tuple
 
@@ -21,7 +22,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 DETECTOR_BACKENDS = ("retinaface", "mtcnn", "opencv")
 
 # Model: ArcFace is more robust to pose variation; fallback to Facenet.
-VERIFICATION_MODEL = "ArcFace"
+VERIFICATION_MODEL = os.environ.get("VERIFICATION_MODEL", "ArcFace")
 
 # Cosine distance threshold below which two faces are "same person" (model-dependent).
 # DeepFace.verify() returns these; we use defaults so precomputed path matches verify() behavior.

@@ -24,6 +24,13 @@ from starlette.middleware.sessions import SessionMiddleware
 # Load environment variables from .env file
 load_dotenv()
 
+# Reduce TensorFlow log noise and limit CPU threads to reduce contention on Render
+# Set these before any TensorFlow/DeepFace import so they take effect early.
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 from face_utils import get_user_folder, verify_image_file
 from s3_utils import (
     upload_reference_image,

@@ -103,14 +103,18 @@ def upload_reference_image(
     client = get_s3_client()
     logger.info("upload_reference_image: putting object %s to bucket=%s", key, S3_BUCKET)
     t0 = time.perf_counter()
-    client.put_object(
-        Bucket=S3_BUCKET,
-        Key=key,
-        Body=image_bytes,
-        ContentType=f"image/{'jpeg' if file_extension.lower() in ('jpg', 'jpeg') else 'png' if file_extension.lower() == 'png' else 'octet-stream'}",
-    )
-    t1 = time.perf_counter()
-    logger.info("upload_reference_image: put_object completed in %.3fs", t1 - t0)
+    try:
+        client.put_object(
+            Bucket=S3_BUCKET,
+            Key=key,
+            Body=image_bytes,
+            ContentType=f"image/{'jpeg' if file_extension.lower() in ('jpg', 'jpeg') else 'png' if file_extension.lower() == 'png' else 'octet-stream'}",
+        )
+        t1 = time.perf_counter()
+        logger.info("upload_reference_image: put_object completed in %.3fs", t1 - t0)
+    except Exception as e:
+        logger.error(f"upload_reference_image: ERROR uploading {key}: {type(e).__name__}: {e}", exc_info=True)
+        raise
     return key
 
 

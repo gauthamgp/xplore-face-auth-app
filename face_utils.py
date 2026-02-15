@@ -30,7 +30,7 @@ VERIFICATION_MODEL = os.environ.get("VERIFICATION_MODEL", "ArcFace")
 
 # Cosine distance threshold below which two faces are "same person" (model-dependent).
 # DeepFace.verify() returns these; we use defaults so precomputed path matches verify() behavior.
-DISTANCE_THRESHOLDS = {"ArcFace": 0.68, "Facenet": 0.40, "VGG-Face": 0.40}
+DISTANCE_THRESHOLDS = {"ArcFace": 0.40, "Facenet": 0.40, "VGG-Face": 0.40}
 
 # Cache filename inside each user folder (optional disk persistence)
 EMBEDDINGS_CACHE_FILE = ".face_embeddings.pkl"

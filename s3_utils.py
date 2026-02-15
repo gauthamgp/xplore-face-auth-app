@@ -55,8 +55,15 @@ def get_s3_client():
     import certifi
     
     try:
-        # Explicitly use certifi's CA bundle for SSL validation
-        # This ensures consistent SSL certificate verification across local and EC2
+        # Set AWS_CA_BUNDLE environment variable for boto3/botocore
+        # This is the most reliable way to ensure SSL cert validation works across platforms
+        if "AWS_CA_BUNDLE" not in os.environ:
+            ca_bundle = certifi.where()
+            if ca_bundle and os.path.exists(ca_bundle):
+                os.environ["AWS_CA_BUNDLE"] = ca_bundle
+                logger.info(f"Set AWS_CA_BUNDLE to {ca_bundle}")
+        
+        # Create S3 client with explicit CA bundle verification
         client = boto3.client(
             "s3",
             region_name=AWS_REGION,

@@ -10,10 +10,14 @@ from __future__ import annotations
 import json
 import pickle
 import os
+import logging
+import time
 from pathlib import Path
 from typing import Tuple
 
 import numpy as np
+
+logger = logging.getLogger("xplore.face_utils")
 
 # Supported image extensions
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -230,11 +234,18 @@ def verify_image_file(
     """
     from deepface import DeepFace
 
+    start_time = time.perf_counter()
+    logger.info(f"verify_image_file: START image={image_path}, folder={user_folder}")
+    logger.info(f"  model={model_name or VERIFICATION_MODEL}, cache={use_embedding_cache}, backends={detector_backends}")
+
     if not Path(image_path).exists():
+        logger.error(f"verify_image_file: Image not found: {image_path}")
         return False, "Image file not found."
 
     ref_paths = list(_get_reference_image_paths(user_folder))
+    logger.info(f"verify_image_file: Found {len(ref_paths)} reference images in {user_folder}")
     if not ref_paths:
+        logger.error(f"verify_image_file: No reference images in {user_folder}")
         return False, "No reference face images found for this user. Add photos to the user folder."
 
     no_face_message = (
@@ -243,36 +254,62 @@ def verify_image_file(
     )
     model = model_name or VERIFICATION_MODEL
     threshold = _get_threshold(model)
+    logger.info(f"verify_image_file: Using model={model}, threshold={threshold}")
 
     # 1. Get precomputed reference embeddings (or build cache on first use)
+    t_ref = time.perf_counter()
     if use_embedding_cache:
+        logger.info(f"verify_image_file: Loading cached reference embeddings...")
         ref_embeddings = get_ref_embeddings(user_folder, model, detector_backends)
     else:
+        logger.info(f"verify_image_file: Building fresh reference embeddings...")
         ref_embeddings = _build_ref_embeddings(user_folder, model, detector_backends)
+    
+    t_ref_done = time.perf_counter()
+    logger.info(f"verify_image_file: Got {len(ref_embeddings)} reference embeddings ({t_ref_done - t_ref:.3f}s)")
 
     if not ref_embeddings:
+        logger.error(f"verify_image_file: Failed to build reference embeddings")
         return False, "No reference face images found for this user. Add photos to the user folder."
 
     # 2. Extract embedding for the live image (once per request)
     live_embedding = None
+    t_live = time.perf_counter()
     for backend in detector_backends:
+        logger.info(f"verify_image_file: Trying detector backend={backend}")
         try:
             embs = _extract_embedding(image_path, model, backend, align, enforce_detection)
             if embs:
                 live_embedding = np.asarray(embs[0])
+                logger.info(f"verify_image_file: Successfully extracted embedding with {backend}")
                 break
         except Exception as e:
+            logger.warning(f"verify_image_file: Backend {backend} failed: {str(e)[:100]}")
             if _is_no_face_error(e):
+                logger.error(f"verify_image_file: No face detected")
                 return False, no_face_message
             continue
+    
+    t_live_done = time.perf_counter()
+    logger.info(f"verify_image_file: Live embedding extraction ({t_live_done - t_live:.3f}s)")
 
     if live_embedding is None:
+        logger.error(f"verify_image_file: Failed to extract live embedding from all backends")
         return False, no_face_message
 
     # 3. Compare to each reference embedding (fast: just vector distance)
-    for ref_emb, _ in ref_embeddings:
+    logger.info(f"verify_image_file: Comparing to {len(ref_embeddings)} reference embeddings...")
+    best_distance = float('inf')
+    for i, (ref_emb, ref_path) in enumerate(ref_embeddings):
         dist = _cosine_distance(live_embedding, ref_emb)
+        logger.debug(f"  Ref[{i}] {Path(ref_path).name}: dist={dist:.4f}")
+        if dist < best_distance:
+            best_distance = dist
         if dist <= threshold:
+            elapsed = time.perf_counter() - start_time
+            logger.info(f"verify_image_file: VERIFIED! dist={dist:.4f} <= {threshold} ({elapsed:.3f}s)")
             return True, f"Face verified (distance: {dist:.3f})"
 
-    return False, "Face does not match the registered user."
+    elapsed = time.perf_counter() - start_time
+    logger.info(f"verify_image_file: FAILED! best_dist={best_distance:.4f} > {threshold} ({elapsed:.3f}s)")
+    return False, f"Face does not match the registered user. (best distance: {best_distance:.3f})"

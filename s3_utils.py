@@ -45,14 +45,23 @@ def get_s3_client():
     boto3 will automatically fetch temporary, rotating credentials from the
     instance metadata service. No explicit AWS keys needed in environment or files.
     
+    SSL validation uses certifi CA bundle (works on both macOS and Linux EC2).
+    
     Raises:
         Exception: If no valid credentials found or S3 access fails.
     """
     import boto3
     from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+    import certifi
     
     try:
-        client = boto3.client("s3", region_name=AWS_REGION)
+        # Explicitly use certifi's CA bundle for SSL validation
+        # This ensures consistent SSL certificate verification across local and EC2
+        client = boto3.client(
+            "s3",
+            region_name=AWS_REGION,
+            verify=certifi.where()  # Use certifi CA bundle for SSL validation
+        )
         
         # Verify we can at least make a request (will fail fast if credentials are invalid)
         # This helps catch credential errors at client creation time

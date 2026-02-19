@@ -113,8 +113,8 @@ async def startup_event():
         except client.exceptions.NoSuchBucket:
             logger.error(f"❌ S3 bucket '{S3_BUCKET}' does not exist in this AWS account/region")
             raise
-        except client.exceptions.Forbidden:
-            logger.error(f"❌ Access denied to S3 bucket '{S3_BUCKET}' — check IAM policy")
+        # except client.exceptions.Forbidden:
+        #     logger.error(f"❌ Access denied to S3 bucket '{S3_BUCKET}' — check IAM policy")
             raise
     except ImportError as e:
         logger.error(f"❌ Failed to import s3_utils: {e}")
